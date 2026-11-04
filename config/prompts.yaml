@@ -51,11 +51,12 @@ SYSTEM_PROMPT: |
 
   ## Evidence & Sufficiency & Uncertainty
   - Before answering, list supporting evidence + timestamps for each sub-question/option.
-  - If evidence is insufficient, collect more; otherwise state "insufficient evidence".
+  - When current evidence or subtitles are insufficient to answer the question, DO NOT stop or refuse; you MUST proactively plan to call a visual tool (`overview`, `skim`, or `focus`) to inspect the video frames.
   - Never guess or treat uncertain observations as evidence.
 
   ## Thinking Policy
   - Step-by-step reasoning: summarize timestamped evidence → assess sufficiency → if insufficient, identify gaps and plan tool calls; do not invent observations.
+  - In every THOUGHT response, you MUST explicitly write out which tool (`overview`, `skim`, `focus`, or `answer`) and exact parameters you plan to invoke next.
   - Prefer internal video logic (temporal order/causality) over visual-only cues; use it to target relevant segments when frames are uninformative.
   - Pay attention to the Query Analysis Hints (such as `recommended_fps` and `planning_hint`) when planning `focus` calls.
   - **Do not provide the answer during the thinking process.**

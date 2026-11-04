@@ -6,7 +6,7 @@ import numpy as np
 from videoseek.core.query_analyzer import QueryAnalyzer, QueryProfile
 from videoseek.tools.focus import execute_focus, focus_tool
 from videoseek.tools.overview import execute_overview, _sample_hybrid_anomaly_frames
-from videoseek.agent import VideoSeekAgent
+from videoseek.agent import VideoSeekAgent, _extract_tool_calls_from_message
 from config import general_config, prompts_config
 
 
@@ -55,7 +55,9 @@ def _make_mock_llm_response(content: str = "", tool_calls: list = None):
     mock_resp = MagicMock()
     mock_msg = MagicMock()
     mock_msg.content = content
-    mock_msg.json.return_value = {"tool_calls": tool_calls or []}
+    mock_msg.tool_calls = tool_calls or []
+    # Simulate Pydantic v2 where .json() returns a JSON string (not a dict)
+    mock_msg.json.return_value = json.dumps({"content": content, "tool_calls": tool_calls or []})
     mock_resp.choices = [MagicMock(message=mock_msg)]
     return mock_resp
 
@@ -511,6 +513,196 @@ class TestModule2AdaptivePerception(unittest.TestCase):
             self.assertNotIn("subtitles", params)
             self.assertNotIn("question", params)
             self.assertNotIn("query_profile", params)
+
+        # Verify OpenAI chat-completions tool_calls arguments in agent.messages are valid JSON strings
+        assistant_tool_msgs = [
+            m for m in agent.messages if m.get("role") == "assistant" and "tool_calls" in m
+        ]
+        self.assertEqual(len(assistant_tool_msgs), 2)
+        for m in assistant_tool_msgs:
+            for tc in m["tool_calls"]:
+                parsed_args = json.loads(tc["function"]["arguments"])
+                self.assertIsInstance(parsed_args, dict)
+
+    @patch("videoseek.agent.load_subtitles")
+    @patch("videoseek.agent.VideoReader")
+    @patch("videoseek.tools.answer.call_llm_api")
+    @patch("videoseek.tools.overview.call_llm_api")
+    @patch("videoseek.agent.call_llm_api")
+    @patch("videoseek.core.query_analyzer.call_llm_api")
+    def test_8_pydantic_v2_tool_calls_and_step0_fallback(
+        self,
+        mock_router_llm,
+        mock_agent_llm,
+        mock_overview_llm,
+        mock_answer_llm,
+        mock_vr_cls,
+        mock_load_subs,
+    ):
+        """
+        Test 8: Verify:
+        1) _extract_tool_calls_from_message & __parse_actions work when message.json() returns a JSON string (Pydantic v2)
+           and when tool_calls are objects with .function.name and .function.arguments attributes.
+        2) Step 0 fallback: when THOUGHT says "Không đủ bằng chứng để xác định dòng chữ màu đỏ." and parser returns [],
+           the agent automatically falls back to calling `overview`, records the Observation, and formats assistant tool_calls
+           arguments as valid JSON strings (json.loads succeeds).
+        """
+        # Part A: Test _extract_tool_calls_from_message with Pydantic v2 JSON string
+        class PydanticV2MsgWithJsonStr:
+            tool_calls = None
+
+            def json(self):
+                return json.dumps(
+                    {
+                        "tool_calls": [
+                            {
+                                "id": "call_pydantic_v2",
+                                "function": {
+                                    "name": "focus",
+                                    "arguments": json.dumps(
+                                        {
+                                            "query": "Read red text",
+                                            "start_time": 420.0,
+                                            "end_time": 423.0,
+                                            "fps": 8,
+                                        }
+                                    ),
+                                },
+                            }
+                        ]
+                    }
+                )
+
+        extracted_v2 = _extract_tool_calls_from_message(PydanticV2MsgWithJsonStr())
+        self.assertEqual(len(extracted_v2), 1)
+        self.assertEqual(extracted_v2[0]["function"]["name"], "focus")
+
+        # Part B: Test object-based tool_calls with .function.name and .function.arguments
+        class DummyFnObj:
+            def __init__(self, name, arguments):
+                self.name = name
+                self.arguments = arguments
+
+        class DummyToolCallObj:
+            def __init__(self, call_id, name, arguments):
+                self.id = call_id
+                self.function = DummyFnObj(name, arguments)
+
+        class MsgWithObjToolCalls:
+            def __init__(self):
+                self.tool_calls = [
+                    DummyToolCallObj(
+                        "call_obj_1",
+                        "focus",
+                        '{"query": "Check red text", "start_time": 44.0, "end_time": 47.0, "fps": 8}',
+                    )
+                ]
+
+        extracted_obj = _extract_tool_calls_from_message(MsgWithObjToolCalls())
+        self.assertEqual(len(extracted_obj), 1)
+        self.assertEqual(extracted_obj[0].function.name, "focus")
+
+        # Part C: Verify __parse_actions handles both Pydantic v2 json() str and object tool_calls,
+        # and Step 0 fallback during agent.run() when THOUGHT is "Không đủ bằng chứng để xác định dòng chữ màu đỏ."
+        mock_vr_cls.return_value = FakeVideoReader(
+            total_frames=3600, fps=30.0, anomaly_range=(1320, 1410)
+        )
+        mock_load_subs.return_value = []
+
+        mock_router_llm.return_value = _make_mock_llm_response(
+            content=json.dumps(
+                {
+                    "query_type": "anomaly_ocr",
+                    "recommended_fps": 8,
+                    "enable_anomaly_scan": True,
+                    "target_cues": ["dòng chữ màu đỏ"],
+                    "planning_hint": "Call overview first.",
+                }
+            )
+        )
+
+        # Create a response whose message.json() returns a str with empty tool_calls (triggering step 0 fallback)
+        step0_empty_parser_resp = MagicMock()
+        step0_msg = MagicMock()
+        step0_msg.tool_calls = None
+        step0_msg.model_dump.return_value = {"tool_calls": []}
+        step0_msg.json.return_value = json.dumps({"tool_calls": []})
+        step0_empty_parser_resp.choices = [MagicMock(message=step0_msg)]
+
+        # Create a response for step 1 parser using object-style tool_calls for `answer`
+        step1_obj_parser_resp = MagicMock()
+        step1_msg = MsgWithObjToolCalls()
+        step1_msg.tool_calls = [DummyToolCallObj("call_ans_obj", "answer", "{}")]
+        step1_obj_parser_resp.choices = [MagicMock(message=step1_msg)]
+
+        mock_agent_llm.side_effect = [
+            # Step 0 THOUGHT: states insufficient evidence without naming a tool
+            _make_mock_llm_response(
+                content="Không đủ bằng chứng để xác định dòng chữ màu đỏ."
+            ),
+            # Step 0 ACTION PARSER: returns empty tool_calls (Pydantic v2 json str) -> triggers step 0 overview fallback
+            step0_empty_parser_resp,
+            # Step 1 THOUGHT: ready to answer after overview observation
+            _make_mock_llm_response(
+                content="Overview showed the red text is 'BI MAT'. Calling answer."
+            ),
+            # Step 1 ACTION PARSER: object-style tool_call for `answer`
+            step1_obj_parser_resp,
+        ]
+
+        mock_overview_llm.return_value = _make_mock_llm_response(
+            content=json.dumps(
+                {
+                    "frames": [
+                        {
+                            "timestamp": "45.0s",
+                            "description": "Red flashing text 'BI MAT' is visible.",
+                        }
+                    ]
+                }
+            )
+        )
+        mock_answer_llm.return_value = _make_mock_llm_response(content="BI MAT")
+
+        agent = VideoSeekAgent(
+            config=self.config,
+            video_path="dummy.mp4",
+            subtitle_path="dummy.srt",
+            output_dir="outputs",
+            tools=["overview", "skim", "focus"],
+            verbose=False,
+        )
+
+        # Also directly test __parse_actions with PydanticV2MsgWithJsonStr
+        pydantic_v2_resp = MagicMock()
+        pydantic_v2_resp.choices = [MagicMock(message=PydanticV2MsgWithJsonStr())]
+        with patch("videoseek.agent.call_llm_api", return_value=pydantic_v2_resp):
+            parsed_actions = agent._VideoSeekAgent__parse_actions(
+                "Focus on 420s-423s at 8 FPS", step=1
+            )
+            self.assertEqual(len(parsed_actions), 1)
+            self.assertEqual(parsed_actions[0].function_name, "focus")
+            self.assertEqual(parsed_actions[0].parameters["fps"], 8)
+
+        # Run full agent flow testing step 0 fallback
+        traj = agent.run("Dòng chữ màu đỏ xuất hiện chớp nhoáng là gì?")
+        self.assertEqual(traj.final_answer, "BI MAT")
+        self.assertEqual(len(traj.steps), 2)
+        self.assertEqual(traj.steps[0].action.function_name, "overview")
+        self.assertIn("BI MAT", traj.steps[0].observation.outcome)
+        self.assertEqual(traj.steps[1].action.function_name, "answer")
+
+        # Verify assistant messages with tool_calls have valid JSON string in function.arguments
+        assistant_tc_msgs = [
+            m for m in agent.messages if m.get("role") == "assistant" and "tool_calls" in m
+        ]
+        self.assertGreaterEqual(len(assistant_tc_msgs), 1)
+        for m in assistant_tc_msgs:
+            for tc in m["tool_calls"]:
+                args_str = tc["function"]["arguments"]
+                self.assertIsInstance(args_str, str)
+                parsed_args = json.loads(args_str)
+                self.assertIsInstance(parsed_args, dict)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 import json
-from typing import List
+from typing import Any, List
 from abc import ABC, abstractmethod
 
 from decord import VideoReader
@@ -13,6 +13,49 @@ from .core import (
 )
 from .tools import DEFAULT_TOOL_REGISTRY
 from .utils import call_llm_api, convert_to_free_form_text_representation, load_subtitles
+
+
+def _extract_tool_calls_from_message(msg: Any) -> list:
+    """
+    Safely extract tool_calls from a litellm/OpenAI message object across
+    Pydantic v1, Pydantic v2, dict, or JSON string representations.
+    """
+    if msg is None:
+        return []
+
+    # 1. Direct attribute access on message object
+    tool_calls = getattr(msg, "tool_calls", None)
+    if tool_calls:
+        return list(tool_calls)
+
+    # 2. Dict access if msg is already a dict
+    if isinstance(msg, dict):
+        tc = msg.get("tool_calls")
+        return list(tc) if tc else []
+
+    # 3. Pydantic v2 model_dump()
+    if hasattr(msg, "model_dump") and callable(msg.model_dump):
+        try:
+            dumped = msg.model_dump()
+            if isinstance(dumped, dict) and dumped.get("tool_calls"):
+                return list(dumped["tool_calls"])
+        except Exception:
+            pass
+
+    # 4. msg.json() (returns str in Pydantic v2, or dict in some custom wrappers)
+    if hasattr(msg, "json") and callable(msg.json):
+        try:
+            raw_json = msg.json()
+            if isinstance(raw_json, str) and raw_json.strip():
+                parsed = json.loads(raw_json)
+                if isinstance(parsed, dict) and parsed.get("tool_calls"):
+                    return list(parsed["tool_calls"])
+            elif isinstance(raw_json, dict) and raw_json.get("tool_calls"):
+                return list(raw_json["tool_calls"])
+        except Exception:
+            pass
+
+    return []
 
 
 class BaseAgent(ABC):
@@ -97,18 +140,24 @@ class VideoSeekAgent(BaseAgent):
         )
         return [{"role": "system", "content": system_prompt}]
 
-    def __parse_actions(self, thought: str) -> List[Action]:
+    def __parse_actions(self, thought: str, step: int = 0) -> List[Action]:
         """
         Parse the actions from the thought.
+        Compatible with both Pydantic v1 and Pydantic v2 litellm responses.
         """
         actions = []
 
         try:
+            parser_prompt = (
+                f"Please call the appropriate tool(s) based on the following thought:\n{thought}\n\n"
+                "Note: If the thought indicates that current information or subtitles are insufficient and no visual "
+                "inspection has been performed yet, call the `overview` tool to inspect the video."
+            )
             response = call_llm_api(
                 messages=[
                     {
                         "role": "user",
-                        "content": f"Please call the appropriate tool(s) based on the following thought:\n{thought}",
+                        "content": parser_prompt,
                     }
                 ],
                 model_name=self.model_name,
@@ -123,31 +172,79 @@ class VideoSeekAgent(BaseAgent):
                 temperature=self.temperature,
             )
 
-            message = response.choices[0].message.json()
-            tool_calls = message.get("tool_calls", [])
+            if response is None or not getattr(response, "choices", None):
+                if step == 0 and self.tool_registry.has_tool("overview"):
+                    return [
+                        Action(
+                            function_name="overview",
+                            parameters={},
+                            function_id="call_overview_step0",
+                        )
+                    ]
+                return []
+
+            msg = response.choices[0].message
+            tool_calls = _extract_tool_calls_from_message(msg)
             answer_call_id = None
+
             for tool_idx, tool_call in enumerate(tool_calls):
-                function_name = tool_call.get("function", {}).get("name", None)
-                parameters = json.loads(
-                    tool_call.get("function", {}).get("arguments", "{}")
-                )
-                function_id = tool_call.get("id", None)
+                if isinstance(tool_call, dict):
+                    fn_obj = tool_call.get("function", {}) or {}
+                    function_id = tool_call.get("id", None)
+                else:
+                    fn_obj = getattr(tool_call, "function", None)
+                    function_id = getattr(tool_call, "id", None)
+
+                if isinstance(fn_obj, dict):
+                    function_name = fn_obj.get("name", None)
+                    raw_args = fn_obj.get("arguments", "{}")
+                else:
+                    function_name = getattr(fn_obj, "name", None) if fn_obj else None
+                    raw_args = getattr(fn_obj, "arguments", "{}") if fn_obj else "{}"
+
+                if isinstance(raw_args, dict):
+                    parameters = dict(raw_args)
+                elif isinstance(raw_args, str):
+                    parameters = json.loads(raw_args) if raw_args.strip() else {}
+                else:
+                    parameters = {}
+
                 if self.tool_registry.has_tool(function_name):
                     if function_name == "answer":
-                        answer_call_id = tool_idx
+                        answer_call_id = len(actions)
                     actions.append(
                         Action(
                             function_name=function_name,
                             parameters=parameters,
-                            function_id=function_id,
+                            function_id=function_id or f"call_{function_name}_{step}_{tool_idx}",
                         )
                     )
         except Exception as e:
             print(f"Error parsing actions: {e}")
+            if step == 0 and self.tool_registry.has_tool("overview"):
+                return [
+                    Action(
+                        function_name="overview",
+                        parameters={},
+                        function_id="call_overview_step0",
+                    )
+                ]
             return []
 
-        if len(actions) > 1 and answer_call_id is not None:
-            actions.pop(answer_call_id)
+        non_answer_actions = [a for a in actions if a.function_name != "answer"]
+        if non_answer_actions:
+            actions = non_answer_actions
+        elif len(actions) > 1:
+            actions = [actions[0]]
+
+        if len(actions) == 0 and step == 0 and self.tool_registry.has_tool("overview"):
+            actions.append(
+                Action(
+                    function_name="overview",
+                    parameters={},
+                    function_id="call_overview_step0",
+                )
+            )
 
         return actions
 
@@ -248,8 +345,9 @@ class VideoSeekAgent(BaseAgent):
                     "content": (
                         f"Step [{step + 1} / {self.max_steps}]: "
                         "Please follow the Thinking Policy to do **reasoning over the current state** "
-                        "and **plan the next action(s) to take** following the Tool Calling Policy "
-                        "and the Final Answer Policy. "
+                        "and **explicitly write in plain text which tool (`overview`, `skim`, `focus`, or `answer`) and its parameters you plan to call next** "
+                        "following the Tool Calling Policy and the Final Answer Policy. "
+                        "(Note: Write your planned tool call in text during this Thought step; the system's action parser will execute the tool for you right after this step.) "
                         "No observation is needed to be provided in the response."
                     ),
                 }
@@ -269,7 +367,16 @@ class VideoSeekAgent(BaseAgent):
                 seed=self.seed,
                 temperature=self.temperature,
             )
-            thought = response.choices[0].message.content
+            raw_thought = (
+                response.choices[0].message.content
+                if (response is not None and getattr(response, "choices", None))
+                else None
+            )
+            thought = (
+                raw_thought
+                if (raw_thought and str(raw_thought).strip())
+                else "I need to inspect the video using `overview` to gather initial visual evidence."
+            )
             self.messages.append({"role": "assistant", "content": thought})
             if self.verbose:
                 print(f"[STEP {step+1} / {self.max_steps}] THOUGHT")
@@ -279,7 +386,7 @@ class VideoSeekAgent(BaseAgent):
             ############################################################
             # ACTIONS
             ############################################################
-            actions = self.__parse_actions(thought)
+            actions = self.__parse_actions(thought, step=step)
             if self.verbose:
                 print(f"[STEP {step+1} / {self.max_steps}] ACTIONS")
                 print([str(action) for action in actions])
@@ -291,7 +398,10 @@ class VideoSeekAgent(BaseAgent):
                         "type": "function",
                         "function": {
                             "name": action.function_name,
-                            "arguments": str(action.parameters),
+                            "arguments": json.dumps(
+                                action.parameters if action.parameters is not None else {},
+                                ensure_ascii=False,
+                            ),
                         },
                     }
                     for action in actions
@@ -338,7 +448,12 @@ class VideoSeekAgent(BaseAgent):
                 self.messages.append(
                     {
                         "role": "user",
-                        "content": "There is no function call in your response. YOU MUST USE A FUNCTION CALL IN EACH RESPONSE.",
+                        "content": (
+                            "Your previous thought did not specify which tool to run. "
+                            "Please write a thought that explicitly states one tool name from [`overview`, `skim`, `focus`, `answer`] "
+                            "and its parameters (e.g., calling `overview` to scan the video, or `focus` with `start_time`, `end_time`, `fps`, `query`) "
+                            "so the system can execute it."
+                        ),
                     }
                 )
                 continue
@@ -374,7 +489,11 @@ class VideoSeekAgent(BaseAgent):
                 seed=self.seed,
                 temperature=self.temperature,
             )
-            self.final_answer = response.choices[0].message.content
+            self.final_answer = (
+                response.choices[0].message.content
+                if (response is not None and getattr(response, "choices", None))
+                else "Unable to determine final answer."
+            )
             self.messages.append({"role": "assistant", "content": self.final_answer})
             return Trajectory(
                 question=question,
