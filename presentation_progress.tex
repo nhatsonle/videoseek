@@ -1,0 +1,369 @@
+\documentclass[aspectratio=169, 10pt]{beamer}
+
+% --- Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[vietnamese]{babel}
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc, fit, backgrounds, shadows}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage{listings}
+\usepackage{pifont}
+
+% --- Beamer Theme & Styling ---
+\usetheme{Madrid}
+\usecolortheme{whale}
+
+% Định nghĩa màu sắc thương hiệu học thuật hiện đại
+\definecolor{primaryBlue}{RGB}{24, 76, 120}
+\definecolor{accentOrange}{RGB}{230, 81, 0}
+\definecolor{darkSlate}{RGB}{38, 50, 56}
+\definecolor{lightGray}{RGB}{245, 247, 250}
+\definecolor{successGreen}{RGB}{46, 125, 50}
+\definecolor{dangerRed}{RGB}{198, 40, 40}
+
+\setbeamercolor{palette primary}{bg=primaryBlue, fg=white}
+\setbeamercolor{palette secondary}{bg=primaryBlue!85, fg=white}
+\setbeamercolor{palette tertiary}{bg=primaryBlue!70, fg=white}
+\setbeamercolor{structure}{fg=primaryBlue}
+\setbeamercolor{title}{fg=white, bg=primaryBlue}
+\setbeamercolor{frametitle}{fg=white, bg=primaryBlue}
+\setbeamercolor{block title}{bg=primaryBlue!15, fg=primaryBlue}
+\setbeamercolor{block body}{bg=lightGray, fg=darkSlate}
+\setbeamercolor{block title alerted}{bg=dangerRed!15, fg=dangerRed}
+\setbeamercolor{block body alerted}{bg=dangerRed!5, fg=darkSlate}
+\setbeamercolor{block title example}{bg=successGreen!15, fg=successGreen}
+\setbeamercolor{block body example}{bg=successGreen!5, fg=darkSlate}
+
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+% --- Metadata ---
+\title[\textbf{Báo Cáo Nghiên Cứu Video Agent}]{\textbf{Nâng Cấp Năng Lực Tri Giác Thích Ứng Truy Vấn \& Dynamic FPS Trong Agentic Video Understanding}}
+\subtitle{Báo Cáo Tiến Độ \& Triển Khai Thực Nghiệm Module 2 (AdaSeek)}
+\author[Lê Nhật Sơn]{Học viên: \textbf{Lê Nhật Sơn}}
+\institute[Computer Vision Lab]{
+    Nghiên cứu về Long-Horizon Video Understanding với Multimodal Agents \\
+    Dựa trên nền tảng VideoSeek (CVPR 2026) \& Route2Look (2026)
+}
+\date{\today}
+
+\begin{document}
+
+% -----------------------------------------------------------------------------
+% SLIDE 1: TITLE PAGE
+% -----------------------------------------------------------------------------
+\begin{frame}
+    \titlepage
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 2: TỔNG QUAN TIẾN ĐỘ & MỤC TIÊU
+% -----------------------------------------------------------------------------
+\begin{frame}{1. Tổng Quan Tiến Độ Nghiên Cứu}
+    \begin{columns}[T]
+        \begin{column}{0.48\textwidth}
+            \begin{block}{\textbf{Tiến độ trước đây}}
+                \begin{itemize}
+                    \item Tái lập thành công baseline \textbf{VideoSeek} (CVPR 2026).
+                    \item Phát hiện \textbf{2 điểm nghẽn cốt tử}:
+                    \begin{enumerate}
+                        \item \textbf{Mù sự kiện chớp nhoáng (3s)}: Lưới lấy mẫu thưa $16\alpha$ cách nhau $\sim 18.75$s trên video dài bỏ lọt $100\%$ chi tiết vi mô ngoài cốt truyện.
+                        \item \textbf{Bẫy lặp tê liệt (Over-deliberation)}: Kẹt 12 turns phân vân dù đã thấy bằng chứng ở Turn 8.
+                    \end{enumerate}
+                \end{itemize}
+            \end{block}
+        \end{column}
+
+        \begin{column}{0.48\textwidth}
+            \begin{exampleblock}{\textbf{Tiến độ vừa đạt được (Tuần này)}}
+                \begin{itemize}
+                    \item \textbf{Khảo sát SOTA}: Đối chiếu cơ chế với \textbf{Route2Look} (2026) và kiến trúc \textbf{Agentic Mode của Google Gemini}.
+                    \item \textbf{Triển khai hoàn tất Module 2}:
+                    \begin{itemize}
+                        \item Single LLM JSON Query Router.
+                        \item Dynamic FPS Focus ($1, 2, 4, 8$ FPS).
+                        \item Hybrid Anomaly-Aware Overview.
+                    \end{itemize}
+                    \item \textbf{Thực nghiệm thành công $100\%$}: Pass 8/8 Unit Tests và bắt trọn sự kiện chữ đỏ 3s chỉ sau \textbf{2 bước}.
+                \end{itemize}
+            \end{exampleblock}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 3: BẢN CHẤT LỖ HỔNG CODE GỐC VIDEOSEEK
+% -----------------------------------------------------------------------------
+\begin{frame}{2. Tại Sao VideoSeek Gốc Bỏ Sót Sự Kiện 3s?}
+    \small
+    \begin{columns}[T]
+        \begin{column}{0.32\textwidth}
+            \begin{alertblock}{\textbf{1. Overview Mù Query}}
+                \begin{itemize}\footnotesize
+                    \item Hàm gốc \textbf{không nhận} câu hỏi $Q$.
+                    \item 64 frames nén lưới $2\times 4$ ($256$px).
+                    \item VLM chỉ tóm tắt cảnh chung, bỏ sót chữ/vật thể nhỏ.
+                \end{itemize}
+            \end{alertblock}
+        \end{column}
+
+        \begin{column}{0.32\textwidth}
+            \begin{alertblock}{\textbf{2. Lưới Lấy Mẫu Thưa}}
+                \begin{itemize}\footnotesize
+                    \item \texttt{np.linspace} cách nhau:
+                    $$\Delta t = \frac{T}{16\alpha} \approx 18.75\text{s}$$
+                    \item Sự kiện 3s nằm giữa 2 frame $\implies$ \textbf{Lọt lưới 100\%}.
+                \end{itemize}
+            \end{alertblock}
+        \end{column}
+
+        \begin{column}{0.32\textwidth}
+            \begin{alertblock}{\textbf{3. Focus Cứng 1 FPS}}
+                \begin{itemize}\footnotesize
+                    \item Schema thiếu tham số \texttt{fps}.
+                    \item Ép cứng tối đa 1 frame/giây.
+                    \item Không đủ độ mịn thời gian để OCR hành động chớp nhoáng.
+                \end{itemize}
+            \end{alertblock}
+        \end{column}
+    \end{columns}
+
+    \vspace{0.3cm}
+    \begin{exampleblock}{\textbf{Giải Pháp Đột Phá Đã Triển Khai (Module 2)}}
+        \centering
+        \small \textbf{Query-Adaptive Perception} (tìm bất thường) kết hợp \textbf{Dynamic FPS Focus} (soi chi tiết 8 FPS).
+    \end{exampleblock}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 4: SƠ ĐỒ KIẾN TRÚC HỆ THỐNG MỚI (TIKZ DIAGRAM)
+% -----------------------------------------------------------------------------
+\begin{frame}{3. Sơ Đồ Kiến Trúc Hệ Thống Đề Xuất (AdaSeek)}
+\centering
+\resizebox{0.92\textwidth}{!}{%
+\begin{tikzpicture}[
+    font=\small,
+    node distance=1.2cm and 1.5cm,
+    base/.style={draw, rounded corners=4pt, align=center, thick, drop shadow},
+    inputNode/.style={base, fill=primaryBlue!10, draw=primaryBlue, minimum width=2.5cm, minimum height=0.9cm},
+    routerNode/.style={base, fill=accentOrange!20, draw=accentOrange, minimum width=3.8cm, minimum height=1.1cm},
+    toolNode/.style={base, fill=lightGray, draw=darkSlate, minimum width=2.8cm, minimum height=0.9cm},
+    highlightTool/.style={base, fill=successGreen!15, draw=successGreen, minimum width=3.2cm, minimum height=0.9cm},
+    obsNode/.style={base, fill=primaryBlue!15, draw=primaryBlue, minimum width=3.2cm, minimum height=0.9cm},
+    decisionNode/.style={base, diamond, aspect=2, fill=accentOrange!15, draw=accentOrange, inner sep=2pt},
+    answerNode/.style={base, fill=successGreen, draw=successGreen!80!black, text=white, minimum width=2.5cm, minimum height=0.9cm, font=\bfseries},
+    arrow/.style={-{Stealth[length=3mm]}, thick, draw=darkSlate},
+    dashArrow/.style={-{Stealth[length=3mm]}, dashed, thick, draw=accentOrange}
+]
+
+    % --- Nodes ---
+    \node[inputNode] (input) {\textbf{User Query $Q$} \\ + \textbf{Video $V$}};
+    \node[routerNode, right=1.2cm of input] (router) {\textbf{LLM JSON Query Router} \\ \footnotesize Phân loại 4 nhóm \& Gán Profile};
+    
+    % Nhánh Tools
+    \node[toolNode, above right=0.6cm and 1.8cm of router] (overview) {\textbf{\texttt{<overview>}} \\ \footnotesize Hybrid Sampling (75\% + 25\%)};
+    \node[toolNode, right=1.8cm of router] (skim) {\textbf{\texttt{<skim>}} \\ \footnotesize Quét thô đoạn dài};
+    \node[highlightTool, below right=0.6cm and 1.8cm of router] (focus) {\textbf{\texttt{<focus>}} (Dynamic FPS) \\ \footnotesize $\text{fps} \in \{1, 2, 4, 8\}$ (Adaptive)};
+    
+    % Vòng lặp Agent
+    \node[obsNode, right=1.5cm of skim] (obs) {\textbf{Observation $o_t$} \\ \footnotesize Ngữ cảnh thị giác mới};
+    \node[decisionNode, right=1.2cm of obs] (check) {Đủ dữ kiện?};
+    \node[answerNode, right=1.2cm of check] (answer) {\textbf{\texttt{<answer>}} \\ Final Output};
+
+    % Khung bao quanh Module 2 mới
+    \begin{scope}[on background layer]
+        \node[draw=accentOrange, dashed, fill=accentOrange!5, rounded corners=6pt, fit=(router) (overview) (focus), inner sep=0.35cm] (boxMod2) {};
+        \node[above=0.05cm of boxMod2.north, text=accentOrange, font=\bfseries\footnotesize] {Module 2: Query-Adaptive Perception \& Dynamic FPS Focus};
+    \end{scope}
+
+    % --- Edges ---
+    \draw[arrow] (input) -- (router);
+    
+    \draw[arrow] (router) |- (overview) node[pos=0.6, above, font=\scriptsize, text=primaryBlue] {Narrative / Anomaly};
+    \draw[arrow] (router) -- (skim) node[pos=0.5, above, font=\scriptsize] {Mid-range};
+    \draw[arrow] (router) |- (focus) node[pos=0.6, below, font=\scriptsize, text=accentOrange] {Explicit / Fine-grained};
+    
+    \draw[arrow] (overview) -| (obs);
+    \draw[arrow] (skim) -- (obs);
+    \draw[arrow] (focus) -| (obs);
+    
+    \draw[arrow] (obs) -- (check);
+    \draw[arrow] (check) -- node[above, font=\scriptsize, text=successGreen] {\textbf{YES}} (answer);
+    
+    % Feedback loop
+    \draw[dashArrow] (check) -- ++(0, 1.8) -| node[pos=0.25, above, font=\scriptsize, text=accentOrange] {NO: Chưa đủ dữ kiện $\rightarrow$ ReAct Next Turn} (focus);
+
+\end{tikzpicture}
+}
+\vspace{0.2cm}
+\begin{itemize}\footnotesize
+    \item \textbf{Cải tiến 1:} Router phân loại trước ý định để chọn FPS và kích hoạt phát hiện bất thường.
+    \item \textbf{Cải tiến 2:} \texttt{<overview>} lai (Hybrid) bảo toàn mạch truyện nhưng không bỏ lọt frame đột biến.
+    \item \textbf{Cải tiến 3:} \texttt{<focus>} thích ứng linh hoạt theo độ rộng cửa sổ thời gian (lên đến 8 FPS cho sự kiện ngắn $\le 3$s).
+\end{itemize}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 5: CHI TIẾT KỸ THUẬT MODULE 2
+% -----------------------------------------------------------------------------
+\begin{frame}{4. Chi Tiết Kỹ Thuật Đã Triển Khai Trong Mã Nguồn}
+    \begin{columns}[T]
+        \begin{column}{0.48\textwidth}
+            \begin{block}{\textbf{1. Single LLM JSON Router (\texttt{query\_analyzer.py})}}
+                \begin{itemize}
+                    \item Gọi 1 lượt LLM duy nhất (\texttt{return\_json=True}, \texttt{low effort}).
+                    \item Phân loại 4 nhóm truy vấn:
+                    \begin{enumerate}\footnotesize
+                        \item \texttt{global\_narrative} ($\text{fps}=1$, scan=False)
+                        \item \texttt{explicit\_temporal} ($\text{fps}=4$, scan=False)
+                        \item \texttt{implicit\_fine\_grained} ($\text{fps}=4$, scan=False)
+                        \item \texttt{anomaly\_ocr} ($\text{fps}=8$, scan=True)
+                    \end{enumerate}
+                    \item Trả về \texttt{QueryProfile} định hướng ngay cho Agent từ Turn 1.
+                \end{itemize}
+            \end{block}
+        \end{column}
+
+        \begin{column}{0.48\textwidth}
+            \begin{block}{\textbf{2. Hybrid Overview \& Dynamic Focus}}
+                \begin{itemize}
+                    \item \textbf{Hybrid Sampling (\texttt{overview.py})}:
+                    \begin{itemize}
+                        \item $75\%$ Uniform frames (mạch cốt truyện).
+                        \item $25\%$ Anomaly Peak frames (quét thô $\Delta I_t$ + sai khác kênh màu để tìm đột biến).
+                        \item Gộp \& sắp xếp đảm bảo luôn là bội số của 8 để ghép lưới $2\times 4$.
+                    \end{itemize}
+                    \item \textbf{Dynamic FPS Focus (\texttt{focus.py})}:
+                    \begin{itemize}
+                        \item Schema tương thích \texttt{strict=True} có tham số \texttt{fps}.
+                        \item Cửa sổ $\le 3$s $\implies$ \textbf{8 FPS} ($24$ frames/3s).
+                        \item Timestamp chi tiết \texttt{\{t:.2f\}s}.
+                    \end{itemize}
+                \end{itemize}
+            \end{block}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 6: KẾT QUẢ THỰC NGHIỆM ĐỐI ĐẦU TRỰC DIỆN
+% -----------------------------------------------------------------------------
+\begin{frame}{5. Kết Quả Thực Nghiệm: Video 120s Chèn Chữ Đỏ 3s (44.0s - 47.0s)}
+    \begin{alertblock}{\textbf{Bài toán kiểm thử:}}
+        \textit{"Trong video có một dòng chữ in hoa màu đỏ xuất hiện chớp nhoáng trong khoảng 3 giây (không nằm trong phụ đề). Nội dung chính xác của dòng chữ màu đỏ đó là gì?"}
+    \end{alertblock}
+
+    \vspace{0.1cm}
+    \begin{table}[h]
+        \centering
+        \resizebox{0.95\textwidth}{!}{%
+        \begin{tabular}{lcccc}
+            \toprule
+            \textbf{Phương Pháp} & \textbf{Query Profile} & \textbf{Overview Frames} & \textbf{Số Bước} & \textbf{Kết Quả} \\
+            \midrule
+            \textbf{VideoSeek Gốc} & Không có & $64$ frames đều (cách 1.87s) & 20 turns (Timeout) & \textcolor{dangerRed}{\textbf{Thất bại}} (Bỏ sót) \\
+            \textbf{AdaSeek (Ours)} & \texttt{anomaly\_ocr} & $48$ đều + $16$ peak anomaly & \textbf{2 turns} & \textcolor{successGreen}{\textbf{Chính xác ("BI MAT")}} \\
+            \bottomrule
+        \end{tabular}%
+        }
+    \end{table}
+
+    \vspace{-0.1cm}
+    \begin{exampleblock}{\textbf{Quan sát từ Trajectory thực tế trên Google Colab (Cell 5):}}
+        \begin{itemize}\footnotesize
+            \item \textbf{Step 1 (Overview)}: Bắt trúng chính xác các frame \texttt{44.1s}, \texttt{44.5s}, \texttt{44.9s}, \texttt{45.3s}, \texttt{45.9s}, \texttt{46.5s}, \texttt{46.9s}!
+            \item \textbf{Observation}: \textit{"44.1s: Bảng chữ nhật nền đỏ đen xuất hiện đột ngột với dòng chữ in hoa màu đỏ chính xác là 'BI MAT'."}
+            \item \textbf{Step 2 (Answer)}: Agent chốt ngay đáp án \textbf{"BI MAT"} $\implies$ Tiết kiệm \textbf{$90\%$} số lượt gọi so với fallback 20 turns!
+        \end{itemize}
+    \end{exampleblock}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 7: MÔI TRƯỜNG THỰC NGHIỆM & TESTING
+% -----------------------------------------------------------------------------
+% \begin{frame}{6. Môi Trường Thực Nghiệm \& Chuẩn Hóa Codebase}
+%     \begin{columns}[T]
+%         \begin{column}{0.48\textwidth}
+%             \begin{block}{\textbf{Bộ Unit Test Hoàn Chỉnh (8/8 Passed)}}
+%                 \begin{itemize}
+%                     \item Đã viết trong \texttt{tests/test\_module2.py}.
+%                     \item Bao phủ 100\% các case:
+%                     \begin{itemize}\footnotesize
+%                         \item Phân loại 4 nhóm Query \& Safe Type Coercion.
+%                         \item Fallback an toàn khi lỗi API JSON.
+%                         \item Schema \texttt{strict=True} \& Format timestamp \texttt{.2f}.
+%                         \item Clamp biên an toàn khi $t_{\text{start}} \ge t_{\text{end}}$.
+%                         \item Lấy mẫu Anomaly trên video $20$ phút ($36.000$ frames).
+%                         \item Dọn sạch tham số, không rò rỉ vào \texttt{trajectory.json}.
+%                     \end{itemize}
+%                 \end{itemize}
+%             \end{block}
+%         \end{column}
+
+%         \begin{column}{0.48\textwidth}
+%             \begin{block}{\textbf{Tích Hợp Sẵn Sàng Trên Google Colab}}
+%                 \begin{itemize}
+%                     \item Đã đóng gói trong notebook \textbf{\texttt{test.ipynb}}:
+%                     \begin{itemize}\footnotesize
+%                         \item \textbf{Cell 1-3}: Clone repo, cài \texttt{mcp}, chạy unit tests tự động.
+%                         \item \textbf{Cell 4-5}: Tạo synthetic video \& chạy end-to-end.
+%                         \item \textbf{Cell 6 (Mới)}: Hỗ trợ \textbf{tự upload video từ máy tính}, nhập đường dẫn Drive hoặc dán trực tiếp \textbf{Link YouTube}.
+%                     \end{itemize}
+%                     \item Toàn bộ code đã được push lên nhánh \texttt{main} tại GitHub chính thức: \\
+%                     \url{https://github.com/nhatsonle/videoseek.git}
+%                 \end{itemize}
+%             \end{block}
+%         \end{column}
+%     \end{columns}
+% \end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 8: KẾ HOẠCH BƯỚC TIẾP THEO
+% -----------------------------------------------------------------------------
+\begin{frame}{7. Kế Hoạch Nghiên Cứu Tuần Tiếp Theo}
+    \begin{columns}[T]
+        \begin{column}{0.48\textwidth}
+            \begin{alertblock}{\textbf{Trọng tâm 1: Module 1 - Loop Breaker}}
+                \begin{itemize}
+                    \item Giải quyết dứt điểm bài toán chiếc két sắt sau ảnh Hitler (bẫy lặp Turn 8 $\rightarrow$ Turn 20).
+                    \item \textbf{No-Regress Policy}: Cấm gọi ngược từ \texttt{focus} về \texttt{overview/skim} khi đã có bằng chứng khẳng định.
+                    \item \textbf{Evidence Sufficiency Estimator (ESE)}: Kiểm tra tính đầy đủ của dữ kiện để ngắt ngay vòng lặp khi câu hỏi đã được giải quyết.
+                \end{itemize}
+            \end{alertblock}
+        \end{column}
+
+        \begin{column}{0.48\textwidth}
+            \begin{exampleblock}{\textbf{Trọng tâm 2: Đánh Giá Trên Benchmark Lớn}}
+                \begin{itemize}
+                    \item Chuẩn bị tập con phân tầng (Stratified Subset) gồm $100-150$ video từ \textbf{LVBench} và \textbf{VideoMME}.
+                    \item Chạy thực nghiệm đối đầu:
+                    \begin{itemize}\footnotesize
+                        \item \textit{Baseline VideoSeek} vs \textit{AdaSeek (Ours)}.
+                        \item Đo lường: Accuracy (\%), Số frames trung bình (\#Frames), Số turns (\#Turns), Chi phí API.
+                    \end{itemize}
+                   
+                \end{itemize}
+            \end{exampleblock}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 9: KẾT LUẬN & Q&A
+% -----------------------------------------------------------------------------
+\begin{frame}
+    \vspace{1.5cm}
+    \centering
+    \Huge \textbf{\textcolor{primaryBlue}{Cảm Ơn Thầy/Cô \& Các Bạn!}} \\
+    \vspace{0.8cm}
+    \normalsize \textit{Rất mong nhận được ý kiến đóng góp \& định hướng tiếp theo.} \\
+    \vspace{0.5cm}
+    \small
+    Mã nguồn dự án: \url{https://github.com/nhatsonle/videoseek.git}
+\end{frame}
+
+\end{document}
+
