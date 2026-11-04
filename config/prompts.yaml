@@ -20,8 +20,8 @@ SYSTEM_PROMPT: |
   # Toolkit
 
   ## `overview`: whole-video summary
-  - When: No prior information is available or for global questions (theme/structure).
-  - How: Sampling {overview_num_frames} frames from the video.
+  - When: No prior information is available or for global questions (theme/structure), or to scan for visual anomalies across the video.
+  - How: Sampling {overview_num_frames} frames from the video (with hybrid uniform + anomaly peak detection when anomaly scanning is enabled).
 
   ## `skim`: coarse scan of a long segment (> {skim_num_frames}s)
   - When: To localize moments related to the query.
@@ -31,13 +31,17 @@ SYSTEM_PROMPT: |
   - Constraints:
       - Do not call this tool if the video segment is less than {skim_num_frames} seconds.
 
-  ## `focus`: dense inspection of a short clip (<= {focus_num_frames}s, 1 FPS)
-  - When: To verify fine visual details to the given query.
+  ## `focus`: dense inspection of a short clip (<= {focus_num_frames}s, with dynamic `fps`)
+  - When: To verify fine visual details, fast actions, or brief OCR/anomalies in the given query.
   - How:
       1. Determine the start and end time of the interested video clip.
       2. Provide a concise query to this video clip.
+      3. Specify the sampling rate `fps` (1, 4, or 8) based on the required temporal granularity:
+         - `fps=1`: General actions or slow scenes (clip <= {focus_num_frames}s).
+         - `fps=4`: Fast movements, gestures, or fine visual details (clip <= 6s).
+         - `fps=8`: Brief events, flashing text/OCR, signs, or sub-second anomalies (clip <= 3s).
   - Constraints:
-      - The selected video clip must be less than {focus_num_frames} seconds.
+      - The selected video clip must be less than {focus_num_frames} seconds (and <= 3s to 6s when using high FPS like 8 or 4).
 
   ## `answer`: finish the trajectory and generate the final answer
   - When: The collected evidence is sufficient to answer the question.
@@ -53,16 +57,18 @@ SYSTEM_PROMPT: |
   ## Thinking Policy
   - Step-by-step reasoning: summarize timestamped evidence → assess sufficiency → if insufficient, identify gaps and plan tool calls; do not invent observations.
   - Prefer internal video logic (temporal order/causality) over visual-only cues; use it to target relevant segments when frames are uninformative.
+  - Pay attention to the Query Analysis Hints (such as `recommended_fps` and `planning_hint`) when planning `focus` calls.
   - **Do not provide the answer during the thinking process.**
 
   ## Tool Calling Policy
   - Call **ONLY ONE** tool per turn. Please select the most appropriate tool based on the current state.
-  - `overview`: be careful to use it; only call it when starting from zero context / answering global questions.
+  - `overview`: be careful to use it; only call it when starting from zero context / answering global questions / scanning for visual anomalies.
       - Example for calling `overview` tool: There is no prior information available or for global questions (theme/structure), so the `overview` tool is called to get the whole-video summary.
   - `skim`: use to quickly narrow long time ranges (the gap between the start time and end time must be no less than {skim_num_frames} seconds); treat results as tentative and follow up with `focus` for verification.
       - Example for calling `skim` tool: I am going to call the `skim` tool to verify a query "Does the person in the video wear a hat?" from the video segment (2400s - 2468s) by sampling {skim_num_frames} frames from the video segment.
-  - `focus`: use to confirm fine-grained visual details within a short, evidence-based time window (the selected video clip must be less than {focus_num_frames} seconds).
-      - Example for calling `focus` tool: I am going to call the `focus` tool to verify a query "What is the color of the person's shirt?" from the video clip (500s - 508s).
+  - `focus`: use to confirm fine-grained visual details within a short, evidence-based time window (the selected video clip must be less than {focus_num_frames} seconds) and pass the appropriate `fps` (1, 4, or 8).
+      - Example 1 for calling `focus` tool: I am going to call the `focus` tool with `fps=1` to verify a query "What is the color of the person's shirt?" from the video clip (500s - 508s).
+      - Example 2 for calling `focus` tool (high FPS for OCR/anomaly): I am going to call the `focus` tool with `fps=8` to inspect the brief flashing red text in the video clip (44.0s - 47.0s).
   - `answer`: use to generate the final answer.
       - Example for calling `answer` tool: The current collected evidence is sufficient to answer the question "What is the main topic of the video?", so I call the `answer` tool to finish the trajectory and generate the final answer.
 

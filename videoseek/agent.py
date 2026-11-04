@@ -4,7 +4,13 @@ from abc import ABC, abstractmethod
 
 from decord import VideoReader
 
-from .core import Action, Observation, Trajectory, TrajectoryStep
+from .core import (
+    Action,
+    Observation,
+    Trajectory,
+    TrajectoryStep,
+    QueryAnalyzer,
+)
 from .tools import DEFAULT_TOOL_REGISTRY
 from .utils import call_llm_api, convert_to_free_form_text_representation, load_subtitles
 
@@ -51,6 +57,10 @@ class VideoSeekAgent(BaseAgent):
         self.duration = round(len(self.vr) / self.vr.get_avg_fps(), 2)
         self.subtitles = load_subtitles(subtitle_path)
 
+        # Query-Adaptive Perception Analyzer
+        self.query_analyzer = QueryAnalyzer(config=self.config)
+        self.query_profile = None
+
         # LLM config
         self.model_name = config["model_name"]
         self.api_base = config["api_base"]
@@ -73,6 +83,7 @@ class VideoSeekAgent(BaseAgent):
         """
         super().reset()
         self.trajectory_steps = []
+        self.query_profile = None
 
     def construct_initial_messages(self) -> List[dict]:
         """
@@ -148,19 +159,34 @@ class VideoSeekAgent(BaseAgent):
         parameters = getattr(action, "parameters", {}) if action else {}
 
         if function_name == "answer":
-            parameters = {"question": self.question, "messages": self.messages}
+            exec_params = {"question": self.question, "messages": self.messages}
         else:
-            parameters.update({"vr": self.vr, "subtitles": self.subtitles})
-        
-        if self.tool_registry.has_tool(function_name):
-            outcome = self.tool_registry.get_function(function_name)(
-                config=self.config, parameters=parameters
+            parameters.update(
+                {
+                    "vr": self.vr,
+                    "subtitles": self.subtitles,
+                    "question": self.question,
+                    "query_profile": self.query_profile,
+                }
             )
-            if outcome is None:
-                outcome = "Tool execution failed."
-            return outcome
-        else:
-            raise ValueError(f"Invalid function name: {function_name}")
+            exec_params = parameters
+
+        try:
+            if self.tool_registry.has_tool(function_name):
+                outcome = self.tool_registry.get_function(function_name)(
+                    config=self.config, parameters=exec_params
+                )
+                if outcome is None:
+                    outcome = "Tool execution failed."
+                return outcome
+            else:
+                raise ValueError(f"Invalid function name: {function_name}")
+        finally:
+            if action and action.parameters is not None:
+                action.parameters.pop("vr", None)
+                action.parameters.pop("subtitles", None)
+                action.parameters.pop("question", None)
+                action.parameters.pop("query_profile", None)
 
     def run(self, question: str):
         self.reset()
@@ -168,6 +194,25 @@ class VideoSeekAgent(BaseAgent):
         subtitles_str = convert_to_free_form_text_representation(
             self.subtitles, content_type="subtitle"
         )
+
+        # Query-Adaptive Analysis via LLM JSON Router
+        query_hint_block = ""
+        if self.config.get("adaptive_fps_enabled", True):
+            self.query_profile = self.query_analyzer.analyze(question)
+            if self.query_profile is not None:
+                cues_str = (
+                    ", ".join(self.query_profile.target_cues)
+                    if self.query_profile.target_cues
+                    else "None"
+                )
+                query_hint_block = (
+                    "\n\nQuery Analysis Profile:\n"
+                    f"- Query Type: {self.query_profile.query_type}\n"
+                    f"- Recommended Focus FPS: {self.query_profile.recommended_fps:g}\n"
+                    f"- Anomaly Scan Enabled: {self.query_profile.enable_anomaly_scan}\n"
+                    f"- Target Cues: {cues_str}\n"
+                    f"- Planning Hint: {self.query_profile.planning_hint}"
+                )
 
         ############################
         # Input
@@ -179,6 +224,7 @@ class VideoSeekAgent(BaseAgent):
                     f"Video Duration: {self.duration:.01f}s\n\n"
                     f"Video Subtitles:\n{subtitles_str}\n\n"
                     f"Question:\n{question}"
+                    f"{query_hint_block}"
                 ),
             }
         )
@@ -190,6 +236,9 @@ class VideoSeekAgent(BaseAgent):
             print("--------------------------------")
             print(f"Question:")
             print(question)
+            if self.query_profile is not None:
+                print("--------------------------------")
+                print(f"Query Profile: {self.query_profile.to_dict()}")
             print("--------------------------------")
 
         for step in range(self.max_steps):
@@ -221,7 +270,6 @@ class VideoSeekAgent(BaseAgent):
                 temperature=self.temperature,
             )
             thought = response.choices[0].message.content
-            # thought = """I will use the `overview` tool next to get a 32-frame summary of the entire video, so I can (1) locate where the visit to TeamLab Planets happens in the timeline and (2) see what location appears immediately afterward. This will guide which narrower time segment to inspect with `skim` or `focus` in later steps."""
             self.messages.append({"role": "assistant", "content": thought})
             if self.verbose:
                 print(f"[STEP {step+1} / {self.max_steps}] THOUGHT")
@@ -265,6 +313,8 @@ class VideoSeekAgent(BaseAgent):
                 if action.parameters is not None:
                     action.parameters.pop("vr", None)
                     action.parameters.pop("subtitles", None)
+                    action.parameters.pop("question", None)
+                    action.parameters.pop("query_profile", None)
                 self.trajectory_steps.append(
                     TrajectoryStep(
                         step_id=step + 1,
@@ -339,4 +389,3 @@ class VideoSeekAgent(BaseAgent):
             final_answer=self.final_answer,
             finish_reason="stop",
         )
-

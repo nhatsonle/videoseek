@@ -21,5 +21,6 @@ output
 .ipynb_checkpoints
 chunyl_scripts
 *.ipynb
+!test.ipynb
 
 data/

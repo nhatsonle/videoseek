@@ -15,4 +15,8 @@ overview_base: 16
 skim_base: 4
 focus_base: 4
 
+adaptive_fps_enabled: true
+anomaly_overview_enabled: true
+max_focus_frames_cap: 24
+
 tools: ["overview", "skim", "focus"]
