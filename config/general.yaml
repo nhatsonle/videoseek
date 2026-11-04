@@ -1,4 +1,4 @@
-model_name: "gpt-5"
+model_name: "gpt-6.1-terra"
 api_base: "OPENAI_API_BASE"
 api_key: "OPENAI_API_KEY"
 api_version: "OPENAI_API_VERSION"
