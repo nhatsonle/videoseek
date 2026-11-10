@@ -281,9 +281,15 @@ def execute_overview(config: dict, parameters: dict) -> str:
     if response is None:
         return "Tool execution failed."
 
-    return "\n\n".join(
-        [
-            f"{frame['timestamp']}: {frame['description']}"
-            for frame in json.loads(response.choices[0].message.content)["frames"]
-        ]
+    parsed_frames = json.loads(response.choices[0].message.content)["frames"]
+    overview_result = "\n\n".join(
+        [f"{frame['timestamp']}: {frame['description']}" for frame in parsed_frames]
     )
+    guidance_suffix = (
+        "\n\n[System Guidance Note]: The overview is a coarse macroscopic summary. "
+        "Small objects, brief events, and fine visual details may occur between sampled frames. "
+        "If the specific target details or fine-grained answers to the question are not directly confirmed in these overview frames, "
+        "DO NOT conclude that they are missing or call the answer tool yet. "
+        "You MUST formulate hypotheses on candidate scenes and call `skim` or `focus` on those time segments to inspect them more closely."
+    )
+    return overview_result + guidance_suffix

@@ -148,11 +148,7 @@ class VideoSeekAgent(BaseAgent):
         actions = []
 
         try:
-            parser_prompt = (
-                f"Please call the appropriate tool(s) based on the following thought:\n{thought}\n\n"
-                "Note: If the thought indicates that current information or subtitles are insufficient and no visual "
-                "inspection has been performed yet, call the `overview` tool to inspect the video."
-            )
+            parser_prompt = f"Please call the appropriate tool(s) based on the following thought:\n{thought}"
             response = call_llm_api(
                 messages=[
                     {
