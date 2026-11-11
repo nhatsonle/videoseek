@@ -11,12 +11,16 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 # Ensure test suite can run even in lightweight environments where decord/litellm are not installed
-if "decord" not in sys.modules:
+try:
+    import decord  # noqa: F401
+except ImportError:
     fake_decord = types.ModuleType("decord")
     fake_decord.VideoReader = MagicMock()
     sys.modules["decord"] = fake_decord
 
-if "litellm" not in sys.modules:
+try:
+    import litellm  # noqa: F401
+except ImportError:
     fake_litellm = types.ModuleType("litellm")
     fake_litellm.completion = MagicMock()
     sys.modules["litellm"] = fake_litellm
