@@ -1,3 +1,3 @@
-from .agent import VideoSeekAgent
+from .agent import VideoSeekAgent, ReflexionEvaluatorAgent
 
-__all__ = ["VideoSeekAgent"]
+__all__ = ["VideoSeekAgent", "ReflexionEvaluatorAgent"]

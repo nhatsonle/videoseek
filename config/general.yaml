@@ -1,4 +1,4 @@
-model_name: "gpt-5"
+model_name: "gpt-6.1-terra"
 api_base: "OPENAI_API_BASE"
 api_key: "OPENAI_API_KEY"
 api_version: "OPENAI_API_VERSION"
@@ -14,5 +14,7 @@ frame_sampling_factor: 4
 overview_base: 16
 skim_base: 4
 focus_base: 4
+max_inspect_frames: 64
+reflexion_enabled: true
 
-tools: ["overview", "skim", "focus"]
+tools: ["inspect"]

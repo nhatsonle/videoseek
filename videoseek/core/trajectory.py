@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from .action import Action
 from .observation import Observation
 
@@ -6,19 +6,30 @@ from .observation import Observation
 class TrajectoryStep:
     """A single step in the agent trajectory."""
 
-    def __init__(self, step_id: int, thought: str, action: Action, observation: Observation):
+    def __init__(
+        self,
+        step_id: int,
+        thought: str,
+        action: Action,
+        observation: Observation,
+        reflection: Optional[str] = None,
+    ):
         self.step_id = step_id
         self.thought = thought
         self.action = action
         self.observation = observation
+        self.reflection = reflection
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data: Dict[str, Any] = {
             "step_id": self.step_id,
             "thought": self.thought,
             "action": self.action.to_dict(),
             "observation": str(self.observation),
         }
+        if self.reflection is not None:
+            data["reflection"] = self.reflection
+        return data
 
 
 class Trajectory:
@@ -33,7 +44,7 @@ class Trajectory:
         return {
             "question": self.question,
             "steps": [s.to_dict() for s in self.steps],
-            "total_steps": max(s.step_id for s in self.steps),
+            "total_steps": max((s.step_id for s in self.steps), default=0),
             "final_answer": self.final_answer,
             "finish_reason": self.finish_reason,
         }
