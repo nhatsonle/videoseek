@@ -1,0 +1,388 @@
+\documentclass[aspectratio=169, 10pt]{beamer}
+
+% --- Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[vietnamese]{babel}
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc, fit, backgrounds, shadows}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage{listings}
+\usepackage{pifont}
+
+% --- Beamer Theme & Styling ---
+\usetheme{Madrid}
+\usecolortheme{whale}
+
+% Định nghĩa màu sắc thương hiệu học thuật hiện đại
+\definecolor{primaryBlue}{RGB}{24, 76, 120}
+\definecolor{accentOrange}{RGB}{230, 81, 0}
+\definecolor{darkSlate}{RGB}{38, 50, 56}
+\definecolor{lightGray}{RGB}{245, 247, 250}
+\definecolor{successGreen}{RGB}{46, 125, 50}
+\definecolor{dangerRed}{RGB}{198, 40, 40}
+\definecolor{purpleTag}{RGB}{123, 31, 162}
+
+\setbeamercolor{palette primary}{bg=primaryBlue, fg=white}
+\setbeamercolor{palette secondary}{bg=primaryBlue!85, fg=white}
+\setbeamercolor{palette tertiary}{bg=primaryBlue!70, fg=white}
+\setbeamercolor{structure}{fg=primaryBlue}
+\setbeamercolor{title}{fg=white, bg=primaryBlue}
+\setbeamercolor{frametitle}{fg=white, bg=primaryBlue}
+\setbeamercolor{block title}{bg=primaryBlue!15, fg=primaryBlue}
+\setbeamercolor{block body}{bg=lightGray, fg=darkSlate}
+\setbeamercolor{block title alerted}{bg=dangerRed!15, fg=dangerRed}
+\setbeamercolor{block body alerted}{bg=dangerRed!5, fg=darkSlate}
+\setbeamercolor{block title example}{bg=successGreen!15, fg=successGreen}
+\setbeamercolor{block body example}{bg=successGreen!5, fg=darkSlate}
+
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+% --- Metadata ---
+\title[\textbf{Báo Cáo Tiến Độ Tuần 2: Dual-Agent Reflexion}]{\textbf{Bước Chuyển Mô Thức: Kiến Trúc Dual-Agent Reflexion \& Công Cụ Thu Phóng Thời Gian Liên Tục Trong Video Agent}}
+\subtitle{Báo Cáo Tiến Độ Nghiên Cứu Tuần 2: Tái Cấu Trúc Toàn Diện Hệ Thống Agentic Video Understanding}
+\author[Lê Nhật Sơn]{Học viên: \textbf{Lê Nhật Sơn}}
+\institute[Computer Vision Lab]{
+    Nghiên cứu về Long-Horizon Video Understanding với Multimodal Agents \\
+    Đột phá từ nền tảng VideoSeek (CVPR 2026) sang Kiến trúc Phản Tư Đa Tác Tử
+}
+\date{\today}
+
+\begin{document}
+
+% -----------------------------------------------------------------------------
+% SLIDE 1: TITLE PAGE
+% -----------------------------------------------------------------------------
+\begin{frame}
+    \titlepage
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 2: ĐẶT VẤN ĐỀ & NHẬN THỨC MỚI
+% -----------------------------------------------------------------------------
+\begin{frame}{1. Đặt Vấn Đề \& Nhận Thức Mới: Tại Sao 3 Công Cụ Rời Rạc Là Chưa Đủ?}
+    \small
+    \begin{columns}[T]
+        \begin{column}{0.32\textwidth}
+            \begin{alertblock}{\textbf{1. Bản Chất Toán Học}}
+                \begin{itemize}\footnotesize
+                    \item 3 công cụ gốc (\texttt{overview}, \texttt{skim}, \texttt{focus}) thực chất chỉ là 3 điểm rời rạc trên cùng hàm:
+                    $$\text{Sample}(start, end, \text{fps})$$
+                    \item Việc chia nhỏ tạo ra ranh giới nhân tạo cứng nhắc.
+                \end{itemize}
+            \end{alertblock}
+        \end{column}
+
+        \begin{column}{0.32\textwidth}
+            \begin{alertblock}{\textbf{2. Ranh Giới Gây Bối Rối}}
+                \begin{itemize}\footnotesize
+                    \item Cần xem đoạn $14$s: dùng \texttt{focus} thì bị khóa cứng $1$ FPS (chỉ 14 frame); dùng \texttt{skim} thì vi phạm luật $>16$s.
+                    \item Agent tốn quá nhiều turn suy nghĩ "chọn tool nào" thay vì tập trung vào mục tiêu.
+                \end{itemize}
+            \end{alertblock}
+        \end{column}
+
+        \begin{column}{0.32\textwidth}
+            \begin{alertblock}{\textbf{3. Bẫy Lặp Phân Vân}}
+                \begin{itemize}\footnotesize
+                    \item Khi đã thấy bằng chứng (ví dụ: két sắt tại Turn 8), cơ chế ReAct thuần túy không có bộ phận tự vấn.
+                    \item Dẫn tới bẫy lặp phân vân 12 turns (kéo dài đến Turn 20 fallback).
+                \end{itemize}
+            \end{alertblock}
+        \end{column}
+    \end{columns}
+
+    \vspace{0.25cm}
+    \begin{exampleblock}{\textbf{Bước Chuyển Mô Thức Đề Xuất (Paradigm Shift)}}
+        \centering
+        \small Thay thế 3 tools rời rạc bằng \textbf{01 Công cụ Thu phóng Liên tục duy nhất} (\texttt{inspect}) kết hợp \textbf{Kiến trúc Dual-Agent Reflexion} (Actor Agent + Reflexion Evaluator Agent).
+    \end{exampleblock}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 3: SƠ ĐỒ KIẾN TRÚC HỆ THỐNG MỚI (TIKZ DIAGRAM)
+% -----------------------------------------------------------------------------
+\begin{frame}{2. Sơ Đồ Kiến Trúc Hệ Thống: Dual-Agent Reflexion \& Unified Tool}
+\centering
+\resizebox{0.92\textwidth}{!}{%
+\begin{tikzpicture}[
+    font=\small,
+    node distance=1.1cm and 1.3cm,
+    base/.style={draw, rounded corners=4pt, align=center, thick, drop shadow},
+    inputNode/.style={base, fill=primaryBlue!10, draw=primaryBlue, minimum width=2.6cm, minimum height=0.9cm},
+    actorNode/.style={base, fill=primaryBlue!20, draw=primaryBlue, minimum width=3.6cm, minimum height=1.1cm, font=\bfseries\small},
+    toolNode/.style={base, fill=accentOrange!20, draw=accentOrange, minimum width=3.8cm, minimum height=1.1cm, font=\bfseries\small},
+    obsNode/.style={base, fill=lightGray, draw=darkSlate, minimum width=3.2cm, minimum height=0.9cm},
+    evalNode/.style={base, fill=purpleTag!20, draw=purpleTag, minimum width=4.0cm, minimum height=1.1cm, font=\bfseries\small},
+    decisionNode/.style={base, diamond, aspect=2, fill=accentOrange!15, draw=accentOrange, inner sep=2pt},
+    answerNode/.style={base, fill=successGreen, draw=successGreen!80!black, text=white, minimum width=2.6cm, minimum height=0.9cm, font=\bfseries},
+    arrow/.style={-{Stealth[length=3mm]}, thick, draw=darkSlate},
+    dashArrow/.style={-{Stealth[length=3mm]}, dashed, thick, draw=purpleTag}
+]
+
+    % --- Nodes ---
+    \node[inputNode] (input) {\textbf{Input Video $V$} \\ + \textbf{User Query $Q$}};
+    \node[actorNode, right=1.0cm of input] (actor) {\textbf{1. ACTOR AGENT} \\ \footnotesize System Prompt: \texttt{SYSTEM\_PROMPT} \\ \scriptsize Sinh Thought \& Chọn $(start, end, \text{fps})$};
+    
+    \node[toolNode, right=1.2cm of actor] (tool) {\textbf{2. UNIFIED TOOL: \texttt{inspect}} \\ \scriptsize $N = (end - start) \times \text{fps} \le 64$ frames \\ \scriptsize Adaptive: Macro Grid ($N>16$) vs Micro ($N\le 16$)};
+    
+    \node[obsNode, right=1.0cm of tool] (obs) {\textbf{Observation $o_t$} \\ \footnotesize Khung hình + Subtitles + Timestamps};
+    
+    \node[evalNode, below=1.2cm of obs] (eval) {\textbf{3. REFLEXION EVALUATOR} \\ \footnotesize System Prompt: \texttt{EVALUATOR\_PROMPT} \\ \scriptsize Thẩm định độc lập: Sufficiency \& Loop Check};
+    
+    \node[decisionNode, below=1.2cm of actor] (check) {Bằng chứng đủ?};
+    \node[answerNode, left=1.2cm of check] (answer) {\textbf{\texttt{<answer>}} \\ Chốt Đáp Án};
+
+    % --- Edges ---
+    \draw[arrow] (input) -- (actor);
+    \draw[arrow] (actor) -- node[above, font=\scriptsize] {Gọi tool} (tool);
+    \draw[arrow] (tool) -- (obs);
+    \draw[arrow] (obs) -- node[right, font=\scriptsize] {Gửi quan sát} (eval);
+    \draw[arrow] (eval) -- (check);
+    
+    \draw[arrow] (check) -- node[above, font=\scriptsize, text=successGreen] {\textbf{YES (SUFFICIENT)}} (answer);
+    
+    % Feedback loop phản tư
+    \draw[dashArrow] (check) -- node[left, font=\scriptsize, text=dangerRed] {\textbf{NO (INSUFFICIENT)}} (actor)
+        node[pos=0.5, right=0.1cm, font=\scriptsize, text=purpleTag] {Chỉ thị phản tư: Điều chỉnh $[start, end]$ \& Tăng FPS};
+
+    % Khung bao quanh cơ chế mới
+    \begin{scope}[on background layer]
+        \node[draw=purpleTag, dashed, fill=purpleTag!5, rounded corners=6pt, fit=(actor) (tool) (eval) (check), inner sep=0.35cm] (boxReflexion) {};
+        \node[above=0.05cm of boxReflexion.north, text=purpleTag, font=\bfseries\footnotesize] {Kiến Trúc Dual-Agent Reflexion \& Continuous Temporal Zooming};
+    \end{scope}
+
+\end{tikzpicture}
+}
+\vspace{0.2cm}
+\begin{itemize}\footnotesize
+    \item \textbf{Actor Agent}: Tập trung ra quyết định và thu phóng thời gian qua duy nhất 1 tool \texttt{inspect}.
+    \item \textbf{Reflexion Evaluator Agent}: Đóng vai trò Giám khảo phản biện độc lập, ngắt bẫy lặp ngay khi đủ bằng chứng.
+\end{itemize}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 4: CHI TIẾT CÔNG CỤ THU PHÓNG LIÊN TỤC (INSPECT)
+% -----------------------------------------------------------------------------
+\begin{frame}{3. Chi Tiết Kỹ Thuật: Unified Continuous Inspection Tool (\texttt{inspect})}
+    \begin{columns}[T]
+        \begin{column}{0.48\textwidth}
+            \begin{block}{\textbf{1. Khống Chế Ngân Sách Frame (2 Lớp)}}
+                \begin{itemize}
+                    \item \textbf{Lớp 1 (Cognitive Guardrail)}:
+                    \begin{itemize}\footnotesize
+                        \item Nêu rõ công thức trong System Prompt của cả 2 Agent:
+                        $$(t_{\text{end}} - t_{\text{start}}) \times \text{fps} \le 64$$
+                    \end{itemize}
+                    \item \textbf{Lớp 2 (Hard Deterministic Guardrail)}:
+                    \begin{itemize}\footnotesize
+                        \item Trong code \texttt{inspect.py}, nếu LLM tính nhẩm sai vượt $64$ frames:
+                        $$N_{\text{frames}} = \min(N_{\text{desired}}, 64)$$
+                        \item Tự động gắn thông báo điều chỉnh $\implies$ \textbf{100\% không bao giờ tràn context hay sập API}.
+                    \end{itemize}
+                \end{itemize}
+            \end{block}
+        \end{column}
+
+        \begin{column}{0.48\textwidth}
+            \begin{block}{\textbf{2. Đóng Gói Ảnh Thích Ứng (Adaptive Packing)}}
+                \begin{itemize}
+                    \item \textbf{Macro Grid Mode ($N > 16$ frames)}:
+                    \begin{itemize}\footnotesize
+                        \item Dùng cho quét toàn cảnh / đoạn dài.
+                        \item Làm tròn bội số của 8, ghép mỗi 8 frames thành lưới $2\times 4$ ($256$px) kèm \texttt{Timestamp Matrix}.
+                        \item Tiết kiệm token tối đa khi quét vĩ mô.
+                    \end{itemize}
+                    \item \textbf{Micro High-Res Mode ($N \le 16$ frames)}:
+                    \begin{itemize}\footnotesize
+                        \item Dùng khi soi cận cảnh, kiểm chứng chi tiết.
+                        \item Giữ nguyên từng frame riêng lẻ độ nét cao.
+                        \item Timestamp chính xác đến phần trăm giây \texttt{\{t:.2f\}s} khi $\text{fps} \ge 4.0$.
+                    \end{itemize}
+                \end{itemize}
+            \end{block}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 5: CƠ CHẾ DUAL-AGENT & LOOP BREAKER
+% -----------------------------------------------------------------------------
+\begin{frame}{4. Kiến Trúc Dual-Agent: Tách Biệt Actor \& Reflexion Evaluator}
+    \begin{columns}[T]
+        \begin{column}{0.48\textwidth}
+            \begin{block}{\textbf{1. Actor Agent (\texttt{VideoSeekAgent})}}
+                \begin{itemize}
+                    \item Sở hữu \texttt{SYSTEM\_PROMPT} riêng bám sát phong cách chuẩn của VideoSeek.
+                    \item \textbf{Khởi đầu linh hoạt (Cold-Start Strategy)}:
+                    \begin{itemize}\footnotesize
+                        \item Nếu câu hỏi chưa có mốc thời gian $\implies$ Quét vĩ mô toàn cảnh với FPS thấp: $\text{fps} \approx 64 / T$.
+                        \item Nếu câu hỏi/phụ đề đã rõ mốc thời gian $\implies$ Nhảy thẳng vào soi cận cảnh, \textbf{không bị ép gọi overview mù quáng ở Step 0}.
+                    \end{itemize}
+                    \item Tiếp thu phản hồi phản tư từ Evaluator để điều chỉnh $[start, end]$ và $\text{fps}$ ở bước kế tiếp.
+                \end{itemize}
+            \end{block}
+        \end{column}
+
+        \begin{column}{0.48\textwidth}
+            \begin{exampleblock}{\textbf{2. Evaluator Agent (\texttt{ReflexionEvaluator})}}
+                \begin{itemize}
+                    \item Sở hữu \texttt{EVALUATOR\_SYSTEM\_PROMPT} và message context hoàn toàn độc lập.
+                    \item \textbf{Sufficiency Verification}: Xác thực trực tiếp xem dữ kiện đã trả lời trọn vẹn câu hỏi hay chưa.
+                    \item \textbf{Dập tắt bẫy lặp (Loop Breaker)}:
+                    \begin{itemize}\footnotesize
+                        \item Khi thấy két sắt sau ảnh Hitler (Turn 8 ở baseline cũ) $\implies$ Đánh giá ngay \textbf{\texttt{SUFFICIENT}} $\implies$ Ra lệnh gọi \texttt{answer} dừng ngay lập tức.
+                        \item Nếu \textbf{\texttt{INSUFFICIENT}} $\implies$ Chỉ rõ thiếu sót và định hướng tăng FPS hoặc dịch chuyển cửa sổ thời gian.
+                    \end{itemize}
+                \end{itemize}
+            \end{exampleblock}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 6: KẾT QUẢ KIỂM THỬ TỰ ĐỘNG
+% -----------------------------------------------------------------------------
+\begin{frame}{5. Kết Quả Kiểm Thử Độc Lập: 8/8 Unit Tests Đạt Trạng Thái PASSED}
+    \begin{table}[h]
+        \centering
+        \resizebox{0.95\textwidth}{!}{%
+        \begin{tabular}{lllc}
+            \toprule
+            \textbf{STT} & \textbf{Kịch Bản Kiểm Thử (\texttt{test\_unified\_reflexion.py})} & \textbf{Mục Tiêu Đánh Giá} & \textbf{Kết Quả} \\
+            \midrule
+            1 & \texttt{test\_1\_inspect\_tool\_schema} & Schema nghiêm ngặt (\texttt{strict=True}), đủ 4 tham số bắt buộc & \textcolor{successGreen}{\textbf{PASSED}} \\
+            2 & \texttt{test\_2\_execute\_inspect\_macro\_grid} & Đóng gói lưới $2\times 4$ khi $N > 16$ kèm Timestamp Matrix & \textcolor{successGreen}{\textbf{PASSED}} \\
+            3 & \texttt{test\_3\_execute\_inspect\_micro\_highres} & Ảnh đơn độ nét cao khi $N \le 16$, timestamp phần trăm giây \texttt{.2f} & \textcolor{successGreen}{\textbf{PASSED}} \\
+            4 & \texttt{test\_4\_frame\_budget\_clamping} & Tự động clamp an toàn khi yêu cầu vượt trần ($480 \implies 64$ frames) & \textcolor{successGreen}{\textbf{PASSED}} \\
+            5 & \texttt{test\_5\_dual\_agent\_prompt\_separation} & Tách biệt System Prompt \& context giữa Actor và Evaluator & \textcolor{successGreen}{\textbf{PASSED}} \\
+            6 & \texttt{test\_6\_end\_to\_end\_reflexion\_workflow} & Luồng phối hợp hoàn chỉnh: Zoom $\implies$ Sufficiency $\implies$ Chốt đáp án & \textcolor{successGreen}{\textbf{PASSED}} \\
+            7 & \texttt{test\_7\_inspect\_boundary\_parameters} & Xử lý biên: $t_{\text{start}} \ge t_{\text{end}}$, thời gian âm, vượt duration, $\text{fps} \le 0$ & \textcolor{successGreen}{\textbf{PASSED}} \\
+            8 & \texttt{test\_8\_pydantic\_v2\_and\_baseline\_3tools} & Tương thích Pydantic v2 tool calls \& luồng Baseline đối chứng & \textcolor{successGreen}{\textbf{PASSED}} \\
+            \bottomrule
+        \end{tabular}%
+        }
+    \end{table}
+
+    \vspace{-0.1cm}
+    \begin{block}{\textbf{Đánh giá chất lượng kỹ thuật:}}
+        \centering
+        \footnotesize Toàn bộ 8 bài test chạy tự động trong \textbf{0.315 giây}. Mã nguồn đạt độ ổn định cao, không có nguy cơ rò rỉ bộ nhớ hay lỗi cú pháp.
+    \end{block}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 7: A/B BENCHMARK CELL 7 TRÊN COLAB
+% -----------------------------------------------------------------------------
+\begin{frame}{6. Cơ Chế Kiểm Thử Đối Đầu Trực Diện A/B Benchmark (Cell 7)}
+    \begin{table}[h]
+        \centering
+        \resizebox{0.95\textwidth}{!}{%
+        \begin{tabular}{lcc}
+            \toprule
+            \textbf{Tiêu Chí Đánh Giá} & \textbf{BASELINE (VideoSeek Gốc)} & \textbf{UPGRADED (Kiến Trúc Mới Đề Xuất)} \\
+            \midrule
+            \textbf{Kiến trúc Agent} & Single-Agent (Không có phản tư) & \textbf{Dual-Agent (Actor + Reflexion Evaluator)} \\
+            \textbf{Bộ công cụ thị giác} & 3 tools cứng: \texttt{overview}, \texttt{skim}, \texttt{focus} & \textbf{01 Unified Tool duy nhất: \texttt{inspect(t1, t2, fps)}} \\
+            \textbf{Cơ chế đóng gói ảnh} & Cố định cứng theo từng tool & \textbf{Linh hoạt: Macro 2x4 Grid / Micro High-Res} \\
+            \textbf{Khả năng điều chỉnh FPS} & Khóa chết $1$ FPS tại \texttt{focus} & \textbf{Động liên tục ($0.02 - 8.0$ FPS)} \\
+            \textbf{Khởi đầu lượt 1 (Cold-start)} & Luôn bị ép chạy \texttt{overview} & \textbf{Chủ động soi ngay nếu câu hỏi có mốc thời gian} \\
+            \textbf{Cơ chế dập tắt bẫy lặp} & Không có (kẹt phân vân tới 20 turns) & \textbf{Reflexion Evaluator ra lệnh chốt ngay khi đủ} \\
+            \bottomrule
+        \end{tabular}%
+        }
+    \end{table}
+
+    \vspace{-0.1cm}
+    \begin{exampleblock}{\textbf{Tích hợp sẵn sàng trên Notebook Colab (\texttt{test.ipynb}):}}
+        \begin{itemize}\footnotesize
+            \item \textbf{Cell 7}: Tự động thực thi đối đầu 2 lượt trên cùng 1 video \& 1 câu hỏi, tự động dò tìm file phụ đề \texttt{.srt}.
+            \item In bảng đo lường trực quan (số turns, thời gian runtime, chuỗi tool gọi) và lưu vào file \texttt{outputs/ab\_comparison\_report.json}.
+        \end{itemize}
+    \end{exampleblock}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 8: BƯỚC CHUYỂN MÔ THỨC & Ý NGHĨA KHOA HỌC
+% -----------------------------------------------------------------------------
+\begin{frame}{7. Bước Chuyển Mô Thức \& Giá Trị Đóng Góp Khoa Học}
+    \begin{columns}[T]
+        \begin{column}{0.48\textwidth}
+            \begin{block}{\textbf{Tiến Trình Phát Triển Của Đề Tài}}
+                \begin{itemize}\footnotesize
+                    \item \textbf{Giai đoạn 1 (VideoSeek gốc)}:
+                    3 tools rời rạc, $1$ FPS cứng, mù sự kiện đột ngột, dễ kẹt lặp.
+                    \item \textbf{Giai đoạn 2 (Module 2 trước đó)}:
+                    Thêm Query Router \& Dynamic FPS $\implies$ Đóng góp mang tính \textit{incremental} (chắp vá tham số).
+                    \item \textbf{Giai đoạn 3 (Tuần này - Đột phá)}:
+                    Tái cấu trúc thành \textbf{Continuous Temporal Inspection + Dual-Agent Reflexion} $\implies$ Bước chuyển mô thức thực thụ!
+                \end{itemize}
+            \end{block}
+        \end{column}
+
+        \begin{column}{0.48\textwidth}
+            \begin{exampleblock}{\textbf{2 Đóng Góp Lớn Cho Bài Báo Khoa Học}}
+                \begin{itemize}\footnotesize
+                    \item \textbf{Đóng góp 1: Continuous Temporal Inspection Tool (CTIT)}:
+                    Xóa bỏ ranh giới nhân tạo giữa các công cụ thị giác; biến bài toán quan sát video thành cơ chế điều khiển thu phóng thời gian liên tục $(t_{\text{start}}, t_{\text{end}}, \text{fps})$.
+                    \item \textbf{Đóng góp 2: Reflexion-Augmented Video Decision Loop}:
+                    Giải quyết tận gốc hạn chế kinh điển của ReAct (vòng lặp suy luận dư thừa và tê liệt quyết định) trong hiểu video dài.
+                \end{itemize}
+            \end{exampleblock}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 9: KẾ HOẠCH BƯỚC TIẾP THEO
+% -----------------------------------------------------------------------------
+\begin{frame}{8. Kế Hoạch Nghiên Cứu Tuần Tiếp Theo}
+    \begin{columns}[T]
+        \begin{column}{0.48\textwidth}
+            \begin{alertblock}{\textbf{Trọng tâm 1: Benchmark Quy Mô Lớn}}
+                \begin{itemize}
+                    \item Chạy thực nghiệm đối đầu trên tập con phân tầng ($100-150$ videos) của \textbf{LVBench} và \textbf{VideoMME}.
+                    \item Đo lường toàn diện 4 chỉ số:
+                    \begin{itemize}\footnotesize
+                        \item Độ chính xác (\%).
+                        \item Số khung hình tiêu thụ (\#Frames).
+                        \item Số lượt suy luận trung bình (\#Turns).
+                        \item Chi phí \& Độ trễ API.
+                    \end{itemize}
+                \end{itemize}
+            \end{alertblock}
+        \end{column}
+
+        \begin{column}{0.48\textwidth}
+            \begin{exampleblock}{\textbf{Trọng tâm 2: Hoàn Thiện Bản Thảo Bài Báo}}
+                \begin{itemize}
+                    \item Hoàn thành bản thảo sơ bộ (Manuscript Draft):
+                    \begin{itemize}\footnotesize
+                        \item Mục \textit{Methodology}: Mô tả hình thức hóa toán học của Continuous Zooming và Dual-Agent Reflexion.
+                        \item Mục \textit{Ablation Study}: Bóc tách định lượng đóng góp độc lập của Tool \texttt{inspect} vs Khối Reflexion Evaluator.
+                    \end{itemize}
+                \end{itemize}
+            \end{exampleblock}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SLIDE 10: KẾT LUẬN & Q&A
+% -----------------------------------------------------------------------------
+\begin{frame}
+    \vspace{1.5cm}
+    \centering
+    \Huge \textbf{\textcolor{primaryBlue}{Cảm Ơn Thầy/Cô \& Các Bạn!}} \\
+    \vspace{0.8cm}
+    \normalsize \textit{Rất mong nhận được ý kiến đóng góp \& định hướng tiếp theo từ Thầy/Cô.} \\
+    \vspace{0.5cm}
+    \small
+    Mã nguồn dự án: \url{https://github.com/nhatsonle/videoseek.git} \\
+    \footnotesize (Nhánh \texttt{main}: Dual-Agent Reflexion | Nhánh \texttt{backup/module2-adaptive}: Phiên bản cũ)
+\end{frame}
+
+\end{document}
